@@ -1,1 +1,22 @@
-#Your Json Formated Cookies Here
+{
+  "request": {
+    "method": "GET",
+    "url": "https://www.ivasms.com/portal",
+    "headers": {
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+      "Cookie": "_ga=GA1.2.1657747737.1754363553; XSRF-TOKEN=eyJpdiI6Ind0WWlFUHVLdllCd0N1Y3lNdHNTMHc9PSIsInZhbHVlIjoiZ2pwY3RLT0dHVktUSUF6NXdrUk1qcTR5NW9LNTBDWTJQalVrTDIyK1huMlE5U05PMC9vNVFObG9QRGptSk05MFBDa0RxOE56bnVnc3U2NmQySnpUVGVFbGJnRjBOODJrVG9rbVJ3aFUrQjVGWXJhaVM2eXVMRkhYNEFIQjY3dE8iLCJtYWMiOiI3MTAyNGFjYjA1ZDk3ODc1OWRkMTczMDg3MWFhNmM0MTZkYTRhNmUxZThkOTc3ZjY5NjVjMDk5NTgyMWVjODMyIiwidGFnIjoiIn0%3D; ivas_sms_session=eyJpdiI6Ilc4dHZGazBsWXFSMUZEY1pBWS95Rnc9PSIsInZhbHVlIjoiK0MvT2VDMWI1amxYZmU5TXgxbE1SeFExRlZlU1RCaWoybGx0ZW9sUmNjVkp1cW5JemNoSjBST0J5eVZhT1lXaSt4OEkwdzBVdGRSZ1dydHNFdTRQWEtkcWh4QWlXTHpZZTE5RHUrdzlrQ21PVHl6N2llM1E2L1JwR2dVUmozd3giLCJtYWMiOiI3OWUzMWU4YTI1N2FjMDk3MGEzMTM3MGRiNTljYmUwZmU4MjViYjAwZTY1OTUxZjRlNWI3ZmQ4ZmJkMjVjYjE4IiwidGFnIjoiIn0%3D; _gid=GA1.2.42789702.1770435809; _gat_gtag_UA_191466370_1=1; _fbp=fb.1.1770435810693.467105267795741692",
+      "Referer": "https://www.ivasms.com/login",
+      "Upgrade-Insecure-Requests": "1",
+      "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36",
+      "sec-ch-ua": "\"Chromium\";v=\"130\", \"Mises\";v=\"130\", \"Not?A_Brand\";v=\"99\", \"Google Chrome\";v=\"130\"",
+      "sec-ch-ua-arch": "\"\"",
+      "sec-ch-ua-bitness": "\"\"",
+      "sec-ch-ua-full-version": "\"130.0.6723.91\"",
+      "sec-ch-ua-full-version-list": "\"Chromium\";v=\"130.0.0.0\", \"Mises\";v=\"130.0.0.0\", \"Not?A_Brand\";v=\"99.0.0.0\", \"Google Chrome\";v=\"130.0.6723.91\"",
+      "sec-ch-ua-mobile": "?1",
+      "sec-ch-ua-model": "\"TECNO KJ5\"",
+      "sec-ch-ua-platform": "\"Android\"",
+      "sec-ch-ua-platform-version": "\"13.0.0\""
+    }
+  }
+}
