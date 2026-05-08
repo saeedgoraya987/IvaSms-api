@@ -9,124 +9,244 @@ import logging
 import os
 import gzip
 from io import BytesIO
-import brotli
 
-logging.basicConfig(level=logging.DEBUG)
+# Brotli - try multiple imports
+try:
+    import brotlicffi as brotli
+    BROTLI_AVAILABLE = True
+except ImportError:
+    try:
+        import brotli
+        BROTLI_AVAILABLE = True
+    except ImportError:
+        BROTLI_AVAILABLE = False
+        brotli = None
+        print("[WARNING] brotli/brotlicffi not installed. Brotli decompression disabled.")
+
+logging.basicConfig(level=logging.INFO, format='%(levelname)s:%(name)s:%(message)s')
 logger = logging.getLogger(__name__)
 
 class IVASSMSClient:
     def __init__(self):
-        self.scraper = cloudscraper.create_scraper()
+        self.scraper = cloudscraper.create_scraper(
+            browser={'browser': 'chrome', 'platform': 'windows', 'mobile': False},
+            delay=10
+        )
         self.base_url = "https://www.ivasms.com"
         self.logged_in = False
         self.csrf_token = None
         
         self.scraper.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+            'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.9',
             'Accept-Encoding': 'gzip, deflate, br',
             'Connection': 'keep-alive',
             'Upgrade-Insecure-Requests': '1',
-            'Sec-Fetch-Dest': 'document',
-            'Sec-Fetch-Mode': 'navigate',
-            'Sec-Fetch-Site': 'none',
-            'Sec-Fetch-User': '?1',
-            'Cache-Control': 'max-age=0',
+            'sec-ch-ua': '"Chromium";v="130", "Not?A_Brand";v="99"',
+            'sec-ch-ua-mobile': '?1',
+            'sec-ch-ua-platform': '"Android"',
         })
 
     def decompress_response(self, response):
         """Decompress response content if encoded with gzip or brotli."""
         encoding = response.headers.get('Content-Encoding', '').lower()
         content = response.content
+        
         try:
             if encoding == 'gzip':
                 logger.debug("Decompressing gzip response")
                 content = gzip.decompress(content)
             elif encoding == 'br':
-                logger.debug("Decompressing brotli response")
-                content = brotli.decompress(content)
+                if not BROTLI_AVAILABLE:
+                    logger.warning("Brotli not available, using raw content")
+                else:
+                    logger.debug("Decompressing brotli response")
+                    try:
+                        # Try brotlicffi first
+                        content = brotli.decompress(content)
+                    except Exception as e1:
+                        try:
+                            # Fall back to standard brotli
+                            import brotli as brotli_std
+                            content = brotli_std.decompress(content)
+                        except Exception as e2:
+                            logger.warning(f"Brotli decompression failed: {e1} / {e2}")
+                            # Use raw content as fallback
+            
             return content.decode('utf-8', errors='replace')
         except Exception as e:
-            logger.error(f"Error decompressing response: {e}")
-            return response.text
+            logger.error(f"Decompression error: {e}")
+            # Last resort: return raw text
+            try:
+                return response.text
+            except:
+                return str(content)
 
     def load_cookies(self, file_path="cookies.json"):
-        try:
-            if os.getenv("COOKIES_JSON"):
-                cookies_raw = json.loads(os.getenv("COOKIES_JSON"))
-                logger.debug("Loaded cookies from environment variable")
-            else:
-                with open(file_path, 'r') as file:
-                    cookies_raw = json.load(file)
-                    logger.debug("Loaded cookies from file")
-            
+        """Load cookies from COOKIE_STRING env var, COOKIES_JSON env var, or file."""
+        cookies = {}
+        
+        # Method 1: COOKIE_STRING env var (highest priority)
+        cookie_string = os.getenv("COOKIE_STRING", "cf_clearance=tOJ4AiCHeQysuCKIu2ap.ywq6tH7tuBpD1alEdhUhTE-1772421994-1.2.1.1-FeajyD1zRlknrDct.knTB0Nt4fNm4whcWiyxF6RZlGjhvFuA6XwEuAyHKl76HEaLDiY5xR34jzoo0wb1y41FDUCaycJ_HVoDT0h_ZcWOxWaLSZGI4Gn.kE5S5FaNVP5Y6BU.vU0_lnD.uSNVoK96.jygtRUV_Z1zfo3VyedaN2JMRZXnpEL2LQcVDJZJ210VVatAnN1laUbu8Ds3fDTA2twCE63Q2I.ES96HN4u7CcU; _fbp=fb.1.1775209460273.153533362686867783; XSRF-TOKEN=eyJpdiI6Ikt5UVhCT1pDaHgwa1RNQ1VKcVVYbVE9PSIsInZhbHVlIjoicFppcWdsbm9qSFE2d2hWbjFzZ0s1T0ZQczBBb3VzUVRyU1ZzdktycWcvUHJZYlFDM0dtcGVSc3dzZC9wK2pkblFvaGphV3VtVmgvUUtqTEhaNDVGZW9sNFFVQXQ3M1VxdWxLbmtpb2NVQms5dDc1YVFZc0kzVG5MN0JFSEgwZmgiLCJtYWMiOiI3YzAxODVjZWU0NTRjNDkyNmVlMTMxM2M5MjUzNmIzOGI0ODk1MWIxYzQxYmI1MzgwYmEyZGIyZmNmY2QyZWYyIiwidGFnIjoiIn0%3D; ivas_sms_session=eyJpdiI6InRDYlhWS1JESmRZa3JHZUEwOEhNVVE9PSIsInZhbHVlIjoiTWhsNUNSTG9LN2lSMjZmL1RFa2tQMWh3WkhqSFVYSHlka0lYbUVtY1c2TXArTldHU09lQTQvdzV1QVM0a01aLzJBM2JjZ0x1NHdHQXlKV2pVa3puUmxPellzWmpleXVMNFdrZEtKUHI3emlrVzI4aHJ4S0VPUk83M3Z0Nk14RFUiLCJtYWMiOiJmYjg0ZTc0YmYxMzY1MWJhYTYwMWViMTVkM2UwNDUxYzIyOTcyZDY5ZDQ1ZDk3NWU3ZjI1MTE3ODZkMTlhMjE1IiwidGFnIjoiIn0%3D")
+        if cookie_string:
+            logger.info("Loading cookies from COOKIE_STRING environment variable")
+            for pair in cookie_string.split(';'):
+                pair = pair.strip()
+                if '=' in pair:
+                    name, value = pair.split('=', 1)
+                    cookies[name.strip()] = value.strip()
+            if cookies:
+                logger.info(f"✅ Loaded {len(cookies)} cookies from COOKIE_STRING")
+                return cookies
+        
+        # Method 2: COOKIES_JSON env var
+        cookies_json = os.getenv("COOKIES_JSON", "")
+        if cookies_json:
+            logger.info("Loading cookies from COOKIES_JSON environment variable")
+            try:
+                cookies_raw = json.loads(cookies_json)
+            except json.JSONDecodeError as e:
+                logger.error(f"Invalid JSON in COOKIES_JSON: {e}")
+                cookies_raw = None
+        else:
+            # Method 3: cookies.json file
+            try:
+                if os.path.exists(file_path):
+                    with open(file_path, 'r') as file:
+                        cookies_raw = json.load(file)
+                        logger.info(f"Loading cookies from {file_path}")
+                else:
+                    logger.error(f"Cookie file not found: {file_path}")
+                    return None
+            except Exception as e:
+                logger.error(f"Error loading cookies file: {e}")
+                return None
+        
+        # Parse cookies from JSON
+        if 'cookies_raw' in locals() and cookies_raw:
             if isinstance(cookies_raw, dict):
-                logger.debug("Cookies loaded as dictionary")
-                return cookies_raw
+                cookies = cookies_raw
+                logger.info(f"✅ Loaded {len(cookies)} cookies (dict)")
             elif isinstance(cookies_raw, list):
-                cookies = {}
                 for cookie in cookies_raw:
                     if 'name' in cookie and 'value' in cookie:
                         cookies[cookie['name']] = cookie['value']
-                logger.debug("Cookies loaded as list")
-                return cookies
+                logger.info(f"✅ Loaded {len(cookies)} cookies (list)")
             else:
-                logger.error("Cookies are in an unsupported format")
-                raise ValueError("Cookies are in an unsupported format.")
-        except FileNotFoundError:
-            logger.error("cookies.json file not found")
-            return None
-        except json.JSONDecodeError:
-            logger.error("Invalid JSON format in cookies.json")
-            return None
-        except Exception as e:
-            logger.error(f"Error loading cookies: {e}")
-            return None
+                logger.error("Unsupported cookie format")
+                return None
+        
+        return cookies if cookies else None
 
     def login_with_cookies(self, cookies_file="cookies.json"):
-        logger.debug("Attempting to login with cookies")
+        """Login using cookies from env var or file."""
+        logger.info("=" * 50)
+        logger.info("🔐 Cookie-based authentication")
+        logger.info("=" * 50)
+        
         cookies = self.load_cookies(cookies_file)
         if not cookies:
-            logger.error("No valid cookies loaded")
+            logger.error("❌ No valid cookies found!")
             return False
         
+        # Set cookies in session
         for name, value in cookies.items():
-            self.scraper.cookies.set(name, value, domain="www.ivasms.com")
+            self.scraper.cookies.set(name, value, domain=".ivasms.com")
+        
+        logger.info(f"🍪 {len(cookies)} cookies set")
         
         try:
-            response = self.scraper.get(f"{self.base_url}/portal/sms/received", timeout=10)
-            logger.debug(f"Response headers: {response.headers}")
-            if response.status_code == 200:
-                html_content = self.decompress_response(response)
-                soup = BeautifulSoup(html_content, 'html.parser')
-                csrf_input = soup.find('input', {'name': '_token'})
-                if csrf_input:
-                    self.csrf_token = csrf_input.get('value')
-                    self.logged_in = True
-                    logger.debug(f"Logged in successfully with CSRF token: {self.csrf_token}")
-                    return True
-                else:
-                    logger.error("Could not find CSRF token. Dumping response HTML for debugging:")
-                    logger.error(f"Response HTML (first 2000 chars): {html_content[:2000]}")
-                    logger.error(f"Full response length: {len(html_content)}")
-                    return False
-            logger.error(f"Login failed with status code: {response.status_code}")
-            return False
+            # Test portal access
+            logger.info("Testing portal access...")
+            response = self.scraper.get(
+                f"{self.base_url}/portal",
+                timeout=15,
+                allow_redirects=True
+            )
+            
+            # Check for redirect to login
+            if 'login' in response.url.lower():
+                logger.error(f"❌ Redirected to login: {response.url}")
+                return False
+            
+            html_content = self.decompress_response(response)
+            
+            # Check for login form
+            if 'Account Login' in html_content:
+                logger.error("❌ Login page detected - cookies invalid!")
+                with open('debug_auth_failed.html', 'w', encoding='utf-8') as f:
+                    f.write(html_content)
+                return False
+            
+            # Success indicators
+            if any(x in html_content for x in ['Saeed Ahmed', 'Dashboard', 'logout']):
+                logger.info("✅ Authentication successful!")
+            else:
+                logger.warning("⚠️ Login status unclear, but no redirect detected")
+            
+            # Get CSRF token from SMS page
+            logger.info("Fetching CSRF token...")
+            response = self.scraper.get(
+                f"{self.base_url}/portal/sms/received",
+                timeout=15
+            )
+            
+            if response.status_code != 200:
+                logger.error(f"Failed to access SMS page: {response.status_code}")
+                return False
+            
+            html_content = self.decompress_response(response)
+            soup = BeautifulSoup(html_content, 'html.parser')
+            
+            # Extract CSRF token
+            csrf_token = None
+            
+            # Method 1: meta tag
+            meta = soup.find('meta', {'name': 'csrf-token'})
+            if meta and meta.get('content'):
+                csrf_token = meta['content']
+            
+            # Method 2: hidden input
+            if not csrf_token:
+                inp = soup.find('input', {'name': '_token'})
+                if inp and inp.get('value'):
+                    csrf_token = inp['value']
+            
+            # Method 3: script tag
+            if not csrf_token:
+                import re
+                for script in soup.find_all('script'):
+                    if script.string and '_token' in script.string:
+                        match = re.search(r'_token["\']?\s*[:=]\s*["\']([^"\']+)', script.string)
+                        if match:
+                            csrf_token = match.group(1)
+                            break
+            
+            if csrf_token:
+                self.csrf_token = csrf_token
+                self.logged_in = True
+                logger.info(f"✅ Logged in! CSRF: {csrf_token[:30]}...")
+                return True
+            else:
+                logger.error("❌ CSRF token not found!")
+                logger.error(f"HTML preview: {html_content[:500]}")
+                return False
+                
         except Exception as e:
-            logger.error(f"Login error: {e}")
+            logger.error(f"❌ Login error: {e}")
+            import traceback
+            traceback.print_exc()
             return False
 
     def check_otps(self, from_date="", to_date=""):
-        if not self.logged_in:
-            logger.error("Not logged in")
+        """Fetch SMS ranges for given date range."""
+        if not self.logged_in or not self.csrf_token:
+            logger.error("Not logged in or no CSRF token")
             return None
         
-        if not self.csrf_token:
-            logger.error("No CSRF token available")
-            return None
+        logger.info(f"Fetching SMS for {from_date} to {to_date or 'today'}")
         
-        logger.debug(f"Checking OTPs from {from_date} to {to_date}")
         try:
             payload = {
                 'from': from_date,
@@ -138,6 +258,7 @@ class IVASSMSClient:
                 'Accept': 'text/html, */*; q=0.01',
                 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
                 'X-Requested-With': 'XMLHttpRequest',
+                'X-CSRF-TOKEN': self.csrf_token,
                 'Origin': self.base_url,
                 'Referer': f"{self.base_url}/portal/sms/received"
             }
@@ -146,27 +267,74 @@ class IVASSMSClient:
                 f"{self.base_url}/portal/sms/received/getsms",
                 data=payload,
                 headers=headers,
-                timeout=10
+                timeout=30
             )
             
-            if response.status_code == 200:
-                logger.debug("Successfully retrieved SMS data")
-                html_content = self.decompress_response(response)
-                soup = BeautifulSoup(html_content, 'html.parser')
-                
-                count_sms = soup.select_one("#CountSMS").text if soup.select_one("#CountSMS") else '0'
-                paid_sms = soup.select_one("#PaidSMS").text if soup.select_one("#PaidSMS") else '0'
-                unpaid_sms = soup.select_one("#UnpaidSMS").text if soup.select_one("#UnpaidSMS") else '0'
-                revenue_sms = soup.select_one("#RevenueSMS").text.replace(' USD', '') if soup.select_one("#RevenueSMS") else '0'
-                
-                sms_details = []
-                items = soup.select("div.item")
-                for item in items:
-                    country_number = item.select_one(".col-sm-4").text.strip()
-                    count = item.select_one(".col-3:nth-child(2) p").text.strip()
-                    paid = item.select_one(".col-3:nth-child(3) p").text.strip()
-                    unpaid = item.select_one(".col-3:nth-child(4) p").text.strip()
-                    revenue = item.select_one(".col-3:nth-child(5) p span.currency_cdr").text.strip()
+            if response.status_code != 200:
+                logger.error(f"Failed: HTTP {response.status_code}")
+                return None
+            
+            html_content = self.decompress_response(response)
+            soup = BeautifulSoup(html_content, 'html.parser')
+            
+            # Extract summary stats
+            count_sms = '0'
+            paid_sms = '0'
+            unpaid_sms = '0'
+            revenue_sms = '0'
+            
+            for selector, default in [
+                ("#CountSMS", "0"), ("#PaidSMS", "0"),
+                ("#UnpaidSMS", "0"), ("#RevenueSMS", "0")
+            ]:
+                elem = soup.select_one(selector)
+                if elem:
+                    val = elem.text.strip().replace(' USD', '')
+                    if selector == "#CountSMS": count_sms = val
+                    elif selector == "#PaidSMS": paid_sms = val
+                    elif selector == "#UnpaidSMS": unpaid_sms = val
+                    elif selector == "#RevenueSMS": revenue_sms = val
+            
+            # Extract SMS ranges - try multiple selectors
+            sms_details = []
+            
+            # Try div.item first
+            items = soup.select("div.item")
+            if not items:
+                # Try div.rng (alternate format)
+                items = soup.select("div.rng")
+            
+            for item in items:
+                try:
+                    # Try to extract range name
+                    name_elem = (
+                        item.select_one(".col-sm-4") or
+                        item.select_one("span.rname") or
+                        item.select_one(".rname")
+                    )
+                    country_number = name_elem.text.strip() if name_elem else "Unknown"
+                    
+                    # Extract counts
+                    count = "0"
+                    paid = "0"
+                    unpaid = "0"
+                    revenue = "0"
+                    
+                    count_elem = item.select_one(".v-count") or item.select_one(".col-3:nth-child(2) p")
+                    if count_elem:
+                        count = count_elem.text.strip()
+                    
+                    paid_elem = item.select_one(".col-3:nth-child(3) p")
+                    if paid_elem:
+                        paid = paid_elem.text.strip()
+                    
+                    unpaid_elem = item.select_one(".col-3:nth-child(4) p")
+                    if unpaid_elem:
+                        unpaid = unpaid_elem.text.strip()
+                    
+                    rev_elem = item.select_one("span.currency_cdr") or item.select_one(".col-3:nth-child(5) p")
+                    if rev_elem:
+                        revenue = rev_elem.text.strip()
                     
                     sms_details.append({
                         'country_number': country_number,
@@ -175,29 +343,32 @@ class IVASSMSClient:
                         'unpaid': unpaid,
                         'revenue': revenue
                     })
-                
-                result = {
-                    'count_sms': count_sms,
-                    'paid_sms': paid_sms,
-                    'unpaid_sms': unpaid_sms,
-                    'revenue': revenue_sms,
-                    'sms_details': sms_details
-                }
-                result['raw_response'] = html_content
-                logger.debug(f"Retrieved {len(sms_details)} SMS detail records: {sms_details}")
-                return result
-            logger.error(f"Failed to check OTPs. Status code: {response.status_code}, Response: {self.decompress_response(response)[:2000]}")
-            return None
+                except Exception as e:
+                    logger.warning(f"Error parsing range item: {e}")
+                    continue
+            
+            result = {
+                'count_sms': count_sms,
+                'paid_sms': paid_sms,
+                'unpaid_sms': unpaid_sms,
+                'revenue': revenue_sms,
+                'sms_details': sms_details
+            }
+            
+            logger.info(f"Found {len(sms_details)} ranges, {count_sms} total SMS")
+            return result
+            
         except Exception as e:
-            logger.error(f"Error checking OTPs: {e}")
+            logger.error(f"Error fetching SMS: {e}")
+            import traceback
+            traceback.print_exc()
             return None
 
     def get_sms_details(self, phone_range, from_date="", to_date=""):
-        if not self.logged_in:
-            logger.error("Not logged in")
+        """Get phone numbers for a specific range."""
+        if not self.logged_in or not self.csrf_token:
             return None
         
-        logger.debug(f"Fetching SMS details for range: {phone_range}, from {from_date} to {to_date}")
         try:
             payload = {
                 '_token': self.csrf_token,
@@ -210,6 +381,7 @@ class IVASSMSClient:
                 'Accept': 'text/html, */*; q=0.01',
                 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
                 'X-Requested-With': 'XMLHttpRequest',
+                'X-CSRF-TOKEN': self.csrf_token,
                 'Origin': self.base_url,
                 'Referer': f"{self.base_url}/portal/sms/received"
             }
@@ -218,45 +390,61 @@ class IVASSMSClient:
                 f"{self.base_url}/portal/sms/received/getsms/number",
                 data=payload,
                 headers=headers,
-                timeout=10
+                timeout=30
             )
             
-            if response.status_code == 200:
-                html_content = self.decompress_response(response)
-                soup = BeautifulSoup(html_content, 'html.parser')
-                number_details = []
-                items = soup.select("div.card.card-body")
-                for item in items:
-                    phone_number = item.select_one(".col-sm-4").text.strip()
-                    count = item.select_one(".col-3:nth-child(2) p").text.strip()
-                    paid = item.select_one(".col-3:nth-child(3) p").text.strip()
-                    unpaid = item.select_one(".col-3:nth-child(4) p").text.strip()
-                    revenue = item.select_one(".col-3:nth-child(5) p span.currency_cdr").text.strip()
-                    onclick = item.select_one(".col-sm-4").get('onclick', '')
-                    id_number = onclick.split("'")[3] if onclick else ''
+            if response.status_code != 200:
+                return None
+            
+            html_content = self.decompress_response(response)
+            soup = BeautifulSoup(html_content, 'html.parser')
+            
+            number_details = []
+            
+            # Try multiple selectors
+            items = soup.select("div.card.card-body") or soup.select("div.nrow")
+            
+            for item in items:
+                try:
+                    # Phone number
+                    phone_elem = (
+                        item.select_one(".col-sm-4") or
+                        item.select_one("span.nnum")
+                    )
+                    phone_number = phone_elem.text.strip() if phone_elem else "Unknown"
+                    phone_number = ''.join(c for c in phone_number if c.isdigit() or c == '+')
+                    
+                    # Extract ID
+                    id_number = ''
+                    onclick = (phone_elem or item).get('onclick', '')
+                    if onclick:
+                        parts = onclick.split("'")
+                        if len(parts) >= 4:
+                            id_number = parts[3]
                     
                     number_details.append({
                         'phone_number': phone_number,
-                        'count': count,
-                        'paid': paid,
-                        'unpaid': unpaid,
-                        'revenue': revenue,
+                        'count': '0',
+                        'paid': '0',
+                        'unpaid': '0',
+                        'revenue': '0',
                         'id_number': id_number
                     })
-                logger.debug(f"Retrieved {len(number_details)} number details for range {phone_range}: {number_details}")
-                return number_details
-            logger.error(f"Failed to get SMS details for {phone_range}. Status code: {response.status_code}, Response: {self.decompress_response(response)[:2000]}")
-            return None
+                except Exception as e:
+                    logger.warning(f"Error parsing number: {e}")
+                    continue
+            
+            return number_details
+            
         except Exception as e:
-            logger.error(f"Error getting SMS details for {phone_range}: {e}")
+            logger.error(f"Error getting SMS details: {e}")
             return None
 
     def get_otp_message(self, phone_number, phone_range, from_date="", to_date=""):
-        if not self.logged_in:
-            logger.error("Not logged in")
+        """Get OTP message for a specific phone number."""
+        if not self.logged_in or not self.csrf_token:
             return None
         
-        logger.debug(f"Fetching OTP message for phone: {phone_number}, range: {phone_range}, from {from_date} to {to_date}")
         try:
             payload = {
                 '_token': self.csrf_token,
@@ -270,6 +458,7 @@ class IVASSMSClient:
                 'Accept': 'text/html, */*; q=0.01',
                 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
                 'X-Requested-With': 'XMLHttpRequest',
+                'X-CSRF-TOKEN': self.csrf_token,
                 'Origin': self.base_url,
                 'Referer': f"{self.base_url}/portal/sms/received"
             }
@@ -278,129 +467,215 @@ class IVASSMSClient:
                 f"{self.base_url}/portal/sms/received/getsms/number/sms",
                 data=payload,
                 headers=headers,
-                timeout=10
+                timeout=30
             )
             
-            if response.status_code == 200:
-                html_content = self.decompress_response(response)
-                soup = BeautifulSoup(html_content, 'html.parser')
-                message = soup.select_one(".col-9.col-sm-6 p").text.strip() if soup.select_one(".col-9.col-sm-6 p") else None
-                logger.debug(f"Retrieved OTP message for {phone_number}: {message}")
-                return message
-            logger.error(f"Failed to get OTP message for {phone_number}. Status code: {response.status_code}, Response: {self.decompress_response(response)[:2000]}")
+            if response.status_code != 200:
+                return None
+            
+            html_content = self.decompress_response(response)
+            soup = BeautifulSoup(html_content, 'html.parser')
+            
+            # Try multiple selectors for message
+            for selector in [".msg-text", ".col-9.col-sm-6 p", "td p", "tbody tr td:last-child"]:
+                elem = soup.select_one(selector)
+                if elem:
+                    return elem.text.strip()
+            
+            # Try to find any text in tbody
+            tbody = soup.find('tbody')
+            if tbody:
+                rows = tbody.find_all('tr')
+                if rows:
+                    last_row = rows[-1]
+                    tds = last_row.find_all('td')
+                    if len(tds) >= 2:
+                        return tds[-1].get_text(strip=True)
+            
             return None
+            
         except Exception as e:
-            logger.error(f"Error getting OTP message for {phone_number}: {e}")
+            logger.error(f"Error getting OTP message: {e}")
             return None
 
     def get_all_otp_messages(self, sms_details, from_date="", to_date="", limit=None):
+        """Get all OTP messages from the list of ranges."""
         all_otp_messages = []
         
-        logger.debug(f"Processing {len(sms_details)} SMS details for OTP messages with limit {limit}")
+        logger.info(f"Processing {len(sms_details)} ranges (limit: {limit or 'none'})")
+        
         for detail in sms_details:
-            phone_range = detail['country_number']
+            phone_range = detail.get('country_number', '')
+            if not phone_range or phone_range == 'Unknown':
+                continue
+            
             number_details = self.get_sms_details(phone_range, from_date, to_date)
             
             if number_details:
                 for number_detail in number_details:
                     if limit is not None and len(all_otp_messages) >= limit:
-                        logger.debug(f"Reached limit of {limit} OTP messages, stopping")
+                        logger.info(f"Reached limit of {limit}")
                         return all_otp_messages
-                    phone_number = number_detail['phone_number']
-                    otp_message = self.get_otp_message(phone_number, phone_range, from_date, to_date)
+                    
+                    phone_number = number_detail.get('phone_number', '')
+                    if not phone_number:
+                        continue
+                    
+                    otp_message = self.get_otp_message(
+                        phone_number, phone_range, from_date, to_date
+                    )
+                    
                     if otp_message:
                         all_otp_messages.append({
                             'range': phone_range,
                             'phone_number': phone_number,
                             'otp_message': otp_message
                         })
-                        logger.debug(f"Added OTP message for {phone_number}: {otp_message}")
-            else:
-                logger.warning(f"No number details found for range: {phone_range}")
         
-        logger.debug(f"Collected {len(all_otp_messages)} OTP messages")
+        logger.info(f"Collected {len(all_otp_messages)} OTP messages")
         return all_otp_messages
 
+
+# ==================== FLASK APP ====================
 app = Flask(__name__)
 client = IVASSMSClient()
 
 with app.app_context():
-    if not client.login_with_cookies():
-        logger.error("Failed to initialize client with cookies")
+    logger.info("=" * 60)
+    logger.info("🚀 IVAS SMS API Starting")
+    logger.info("=" * 60)
+    
+    if client.login_with_cookies():
+        logger.info("✅ Client initialized successfully")
+    else:
+        logger.error("❌ Client initialization failed!")
+        logger.error("Set COOKIE_STRING env var with valid cookies")
+
 
 @app.route('/')
 def welcome():
     return jsonify({
-        'message': 'Welcome to the IVAS SMS API',
-        'status': 'API is alive',
+        'message': 'IVAS SMS API',
+        'status': 'running',
+        'authenticated': client.logged_in,
         'endpoints': {
-            '/sms': 'Get OTP messages for a specific date (format: DD/MM/YYYY) with optional limit. Example: /sms?date=01/05/2025&limit=10'
+            '/sms?date=DD/MM/YYYY&limit=10': 'Get OTP messages',
+            '/status': 'Check auth status',
+            '/debug': 'Debug raw HTML'
         }
     })
 
+
+@app.route('/status')
+def status():
+    return jsonify({
+        'authenticated': client.logged_in,
+        'csrf_token': client.csrf_token[:30] + '...' if client.csrf_token else None,
+        'broti_available': BROTLI_AVAILABLE
+    })
+
+
+@app.route('/debug')
+def debug():
+    """Debug endpoint to see raw SMS data."""
+    if not client.logged_in:
+        client.login_with_cookies()
+    
+    if not client.csrf_token:
+        return jsonify({'error': 'No CSRF token'}), 500
+    
+    from_date = request.args.get('date', '')
+    
+    try:
+        payload = {'from': from_date, 'to': '', '_token': client.csrf_token}
+        headers = {
+            'Accept': 'text/html, */*; q=0.01',
+            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+            'X-Requested-With': 'XMLHttpRequest',
+            'X-CSRF-TOKEN': client.csrf_token,
+        }
+        
+        r = client.scraper.post(
+            f"{client.base_url}/portal/sms/received/getsms",
+            data=payload, headers=headers, timeout=30
+        )
+        
+        html = client.decompress_response(r)
+        
+        return jsonify({
+            'status_code': r.status_code,
+            'html_length': len(html),
+            'has_items': 'item' in html or 'rng' in html,
+            'item_count': html.count('class="item"') + html.count('class="rng"'),
+            'html_preview_1000': html[:1000],
+            'html_preview_last_1000': html[-1000:] if len(html) > 1000 else ''
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/sms')
 def get_sms():
+    if not client.logged_in:
+        logger.warning("Re-authenticating...")
+        if not client.login_with_cookies():
+            return jsonify({'error': 'Authentication failed. Update cookies.'}), 401
+    
     date_str = request.args.get('date')
     limit = request.args.get('limit')
     
     if not date_str:
-        return jsonify({
-            'error': 'Date parameter is required in DD/MM/YYYY format'
-        }), 400
+        return jsonify({'error': 'Date required: DD/MM/YYYY'}), 400
     
     try:
-        parsed_date = datetime.strptime(date_str, '%d/%m/%Y') 
+        datetime.strptime(date_str, '%d/%m/%Y')
         from_date = date_str
         to_date = request.args.get('to_date', '')
         if to_date:
-            datetime.strptime(to_date, '%d/%m/%Y')  
+            datetime.strptime(to_date, '%d/%m/%Y')
     except ValueError:
-        return jsonify({
-            'error': 'Invalid date format. Use DD/MM/YYYY'
-        }), 400
-
+        return jsonify({'error': 'Invalid date. Use DD/MM/YYYY'}), 400
+    
     if limit:
         try:
             limit = int(limit)
             if limit <= 0:
-                return jsonify({
-                    'error': 'Limit must be a positive integer'
-                }), 400
+                return jsonify({'error': 'Limit must be positive'}), 400
         except ValueError:
-            return jsonify({
-                'error': 'Limit must be a valid integer'
-            }), 400
+            return jsonify({'error': 'Limit must be integer'}), 400
     else:
         limit = None
-
-    if not client.logged_in:
-        return jsonify({
-            'error': 'Client not authenticated'
-        }), 401
     
-    logger.debug(f"Fetching SMS for date range: {from_date} to {to_date or 'empty'} with limit {limit}")
+    logger.info(f"📱 SMS request: {from_date} limit={limit}")
+    
     result = client.check_otps(from_date=from_date, to_date=to_date)
     
     if not result:
-        return jsonify({
-            'error': 'Failed to fetch OTP data'
-        }), 500
-
-    otp_messages = client.get_all_otp_messages(result.get('sms_details', []), from_date=from_date, to_date=to_date, limit=limit)
+        return jsonify({'error': 'Failed to fetch SMS data'}), 500
+    
+    otp_messages = client.get_all_otp_messages(
+        result.get('sms_details', []),
+        from_date=from_date,
+        to_date=to_date,
+        limit=limit
+    )
     
     return jsonify({
         'status': 'success',
         'from_date': from_date,
         'to_date': to_date or 'Not specified',
-        'limit': limit if limit is not None else 'Not specified',
+        'limit': limit if limit else 'Not specified',
         'sms_stats': {
             'count_sms': result['count_sms'],
             'paid_sms': result['paid_sms'],
             'unpaid_sms': result['unpaid_sms'],
             'revenue': result['revenue']
         },
-        'otp_messages': otp_messages
+        'otp_messages': otp_messages,
+        'total_otps': len(otp_messages)
     })
 
+
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    port = int(os.getenv('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False)
